@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IoT Dashboard - Graphs</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: Arial, sans-serif; background: #e8f5e9; margin:0; padding:20px; }
+h1 { color: #1b5e20; }
+h2 { margin-top:40px; color: #2e7d32; }
+
+canvas {
+  background:white;
+  padding:20px;
+  border-radius:12px;
+  margin-top:30px;
+  box-shadow:0 4px 10px rgba(0,0,0,0.1);
+}
+
+button {
+  background-color: #2e7d32;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  cursor:pointer;
+  font-size:16px;
+  margin-bottom:20px;
+}
+button:hover { background-color:#1b5e20; }
+</style>
+</head>
+<body>
+
+<h1>IoT Environmental Monitoring - Graphs</h1>
+<button onclick="location.href='index.html'">Back to Live Data</button>
+
+<canvas id="tempChart"></canvas>
+<canvas id="presChart"></canvas>
+<canvas id="humChart"></canvas>
+<canvas id="waterChart"></canvas>
+
+<script>
+// ThingSpeak configuration
+const CHANNEL_ID = "3217594";
+const READ_API_KEY = "5PEGJNOBO8DC3RRS";
+const RESULTS = 1500;
+
+// Exponential smoothing function
+function exponentialSmooth(data, alpha=0.1) {
+  const smoothed = [];
+  if(data.length === 0) return smoothed;
+
+  let last = data[0];
+  smoothed.push(Number(last.toFixed(2)));
+
+  for(let i=1; i<data.length; i++){
+    last = alpha*data[i] + (1-alpha)*last;
+    smoothed.push(Number(last.toFixed(2)));
+  }
+  return smoothed;
+}
+
+// Generic function to draw a chart
+function drawChart(canvasId, label, dataArr, smooth=false){
+  const chartData = smooth ? exponentialSmooth(dataArr, 0.03) : dataArr;
+
+  const minVal = Math.min(...dataArr);
+  const maxVal = Math.max(...dataArr);
+  const avgVal = (dataArr.reduce((a,b)=>a+b,0)/dataArr.length).toFixed(2);
+
+  new Chart(document.getElementById(canvasId), {
+    type: 'line',
+    data: {
+      labels: dataArr.map((_,i)=>i+1), // simple index labels
+      datasets: [
+        {
+          label: label,
+          data: chartData,
+          borderWidth: 2,
+          fill: false,
+          tension: smooth ? 0.45 : 0
+        },
+        {
+          label: 'Min',
+          data: Array(dataArr.length).fill(minVal),
+          borderDash: [5,5],
+          fill: false
+        },
+        {
+          label: 'Max',
+          data: Array(dataArr.length).fill(maxVal),
+          borderDash: [5,5],
+          fill: false
+        },
+        {
+          label: 'Avg',
+          data: Array(dataArr.length).fill(avgVal),
+          borderDash: [5,5],
+          fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        y: {
+          beginAtZero: false, // Chart.js auto scales based on actual readings
+          title: { display: true, text: label }
+        },
+        x: {
+          title: { display: true, text: 'Data Points' }
+        }
+      }
+    }
+  });
+}
+
+// Fetch data from ThingSpeak and update charts
+// Fetch data from ThingSpeak and update charts
+function updateGraphs(){
+  fetch(`https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?api_key=${READ_API_KEY}&results=${RESULTS}`)
+    .then(res => res.json())
+    .then(data => {
+      const feeds = data.feeds.filter(f => f.field1 && f.field2 && f.field3 && f.field4);
+
+      const temp = feeds.map(f => parseFloat(f.field1));
+      const pres = feeds.map(f => parseFloat(f.field2));
+      const hum  = feeds.map(f => parseFloat(f.field3));
+
+      // Real water data
+      const water = feeds.map(f => parseFloat(f.field4));
+
+      // Use timestamps for X-axis labels
+      const labels = feeds.map(f => {
+        const d = new Date(f.created_at);
+        return d.toLocaleString(); // e.g., "1/9/2026, 9:05:00 AM"
+      });
+
+      // Draw all charts
+      drawChartWithLabels("tempChart","Temperature (°C)",temp, labels);
+      drawChartWithLabels("presChart","Pressure (hPa)",pres, labels);
+      drawChartWithLabels("humChart","Humidity (%)",hum, labels);
+      drawChartWithLabels("waterChart","Water Level (cm)",water, labels, true); // smoothing
+    })
+    .catch(err => console.error("Error fetching data:", err));
+}
+
+// Updated drawChart to accept labels
+function drawChartWithLabels(canvasId, label, dataArr, labels, smooth=false){
+  const chartData = smooth ? exponentialSmooth(dataArr, 0.03) : dataArr;
+
+  const minVal = Math.min(...dataArr);
+  const maxVal = Math.max(...dataArr);
+  const avgVal = (dataArr.reduce((a,b)=>a+b,0)/dataArr.length).toFixed(2);
+
+  new Chart(document.getElementById(canvasId), {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: label,
+          data: chartData,
+          borderWidth: 2,
+          fill: false,
+          tension: smooth ? 0.45 : 0
+        },
+        {
+          label: 'Min',
+          data: Array(dataArr.length).fill(minVal),
+          borderDash: [5,5],
+          fill: false
+        },
+        {
+          label: 'Max',
+          data: Array(dataArr.length).fill(maxVal),
+          borderDash: [5,5],
+          fill: false
+        },
+        {
+          label: 'Avg',
+          data: Array(dataArr.length).fill(avgVal),
+          borderDash: [5,5],
+          fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        y: {
+          beginAtZero: false,
+          title: { display: true, text: label }
+        },
+        x: {
+          title: { display: true, text: 'Timestamp' },
+          ticks: {
+            maxRotation: 90,
+            minRotation: 45
+          }
+        }
+      }
+    }
+  });
+}
+
+
+// Initial load + auto-update every 10 minutes
+updateGraphs();
+setInterval(updateGraphs, 600000);
+</script>
+
+
+</body>
+</html>

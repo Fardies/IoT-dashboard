@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IoT Campus Environmental Monitoring Dashboard - Live & Table</title>
+<style>
+/* ===== GLOBAL ===== */
+body {
+  font-family: 'Segoe UI', Arial, sans-serif;
+  margin: 0;
+  padding: 20px;
+  background: linear-gradient(135deg, #d4f5e9 0%, #f0fff7 100%);
+  background-attachment: fixed;
+}
+
+h1 { text-align:center; margin-bottom:15px; color:#1b5e20; }
+h2 { color:#2e7d32; }
+
+/* ===== NAVIGATION ===== */
+nav { text-align:center; margin-bottom:25px; }
+nav a {
+  text-decoration:none; margin:0 8px; padding:10px 18px;
+  background: linear-gradient(135deg, #43a047, #2e7d32);
+  color:white; border-radius:30px; font-weight:bold;
+  box-shadow:0 4px 10px rgba(0,0,0,0.2); transition: transform 0.2s, box-shadow 0.2s;
+}
+nav a:hover { transform: translateY(-2px); box-shadow:0 6px 14px rgba(0,0,0,0.3); }
+
+/* ===== LIVE DASHBOARD ===== */
+.dashboard {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:20px;
+}
+.card {
+  background: rgba(255,255,255,0.9); backdrop-filter: blur(6px);
+  padding:18px; border-radius:16px; text-align:center;
+  box-shadow:0 8px 20px rgba(0,0,0,0.15); border-top:6px solid #4caf50;
+}
+.card h3 { margin-bottom:6px; color:#2e7d32; }
+.card h2 { font-size:2em; color:#1b5e20; }
+
+/* ===== TABLE ===== */
+table {
+  width:100%; border-collapse:collapse; margin-top:35px;
+  background:white; border-radius:16px; overflow:hidden;
+  box-shadow:0 8px 20px rgba(0,0,0,0.15);
+}
+th, td { padding:12px; text-align:center; }
+th { background: linear-gradient(135deg, #43a047, #2e7d32); color:white; font-weight:bold; }
+thead tr:nth-child(2) th { background:#66bb6a; font-size:0.9em; }
+tbody tr:nth-child(even) { background:#f1f8f4; }
+tbody tr:hover { background:#e0f2f1; }
+
+/* ===== SMALL SCREEN ===== */
+@media (max-width:600px){ .card h2{ font-size:1.6em; } }
+</style>
+</head>
+<body>
+
+<h1>IoT Campus Environmental Monitoring System - Live & Table</h1>
+<nav><a href="testing.html">View Charts</a></nav>
+
+<!-- Live Values -->
+<div class="dashboard">
+  <div class="card"><h3>Water Level (cm)</h3><h2 id="waterLevel">--</h2></div>
+  <div class="card"><h3>Temperature (°C)</h3><h2 id="temperature">--</h2></div>
+  <div class="card"><h3>Humidity (%)</h3><h2 id="humidity">--</h2></div>
+  <div class="card"><h3>Pressure (hPa)</h3><h2 id="pressure">--</h2></div>
+</div>
+
+<!-- Daily Summary Table -->
+<h2 style="text-align:center;">Daily Summary Table</h2>
+<table id="dailySummary">
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Water Level (cm)</th>
+      <th>Temperature (°C)</th>
+      <th>Humidity (%)</th>
+      <th>Pressure (hPa)</th>
+    </tr>
+    <tr>
+      <th></th>
+      <th>Min | Max | Avg</th>
+      <th>Min | Max | Avg</th>
+      <th>Min | Max | Avg</th>
+      <th>Min | Max | Avg</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+const CHANNEL_ID = "3217594";
+const READ_API_KEY = "5PEGJNOBO8DC3RRS";
+const FIELDS = {water:4, temp:1, hum:3, pres:2};
+const LIVE_INTERVAL = 20000; // 20s
+const TABLE_INTERVAL = 1800000; // 30min
+
+// Keep last valid value
+let lastWater, lastTemp, lastHum, lastPres;
+
+// Keep last daily summary rows
+let lastDailyRows = [];
+
+// Fetch data from ThingSpeak
+async function fetchFieldData(field){
+  const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/fields/${field}.json?api_key=${READ_API_KEY}&results=800`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if(!data.feeds || data.feeds.length === 0) return [];
+
+    return data.feeds.map(f => {
+      const val = parseFloat(f[`field${field}`]);
+      return { value: isNaN(val)? null : val, timestamp: f.created_at };
+    }).filter(d => d.value !== null);
+
+  } catch(err){
+    console.error(`❌ Error fetching field ${field}:`, err);
+    return [];
+  }
+}
+
+// Calculate daily summary (local time)
+function calculateDailySummary(data){
+  const dailyData = {};
+  data.forEach(d=>{
+    const dt = new Date(d.timestamp); // local time
+    const date = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+    
+    if(!dailyData[date]) dailyData[date]=[];
+    if(d.value !== null) dailyData[date].push(d.value);
+  });
+
+  const summary=[];
+  for(const date in dailyData){
+    const values = dailyData[date];
+    if(values.length===0) continue;
+    const min = Math.min(...values).toFixed(2);
+    const max = Math.max(...values).toFixed(2);
+    const avg = (values.reduce((a,b)=>a+b,0)/values.length).toFixed(2);
+    summary.push({date,min,max,avg});
+  }
+  return summary;
+}
+
+// Update live cards
+async function updateLiveValues(){
+  try{
+    const water = await fetchFieldData(FIELDS.water);
+    const temp  = await fetchFieldData(FIELDS.temp);
+    const hum   = await fetchFieldData(FIELDS.hum);
+    const pres  = await fetchFieldData(FIELDS.pres);
+
+    // WATER
+    if(water.length){
+      const v = water[water.length-1].value;
+      if(v !== null) lastWater = v;
+    }
+    document.getElementById('waterLevel').innerText = lastWater ?? '--';
+
+    // TEMP
+    if(temp.length){
+      const v = temp[temp.length-1].value;
+      if(v !== null) lastTemp = v;
+    }
+    document.getElementById('temperature').innerText = lastTemp ?? '--';
+
+    // HUM
+    if(hum.length){
+      const v = hum[hum.length-1].value;
+      if(v !== null) lastHum = v;
+    }
+    document.getElementById('humidity').innerText = lastHum ?? '--';
+
+    // PRES
+    if(pres.length){
+      const v = pres[pres.length-1].value;
+      if(v !== null) lastPres = v;
+    }
+    document.getElementById('pressure').innerText = lastPres ?? '--';
+
+  } catch(err){
+    console.error("Live update error:", err);
+    document.getElementById('waterLevel').innerText = lastWater ?? '--';
+    document.getElementById('temperature').innerText = lastTemp ?? '--';
+    document.getElementById('humidity').innerText = lastHum ?? '--';
+    document.getElementById('pressure').innerText = lastPres ?? '--';
+  }
+}
+
+// Update daily summary table
+async function updateTable(){
+  try{
+    const water = await fetchFieldData(FIELDS.water);
+    const temp  = await fetchFieldData(FIELDS.temp);
+    const hum   = await fetchFieldData(FIELDS.hum);
+    const pres  = await fetchFieldData(FIELDS.pres);
+
+    const waterSummary = calculateDailySummary(water);
+    const tempSummary  = calculateDailySummary(temp);
+    const humSummary   = calculateDailySummary(hum);
+    const presSummary  = calculateDailySummary(pres);
+
+    const dates = [...new Set([
+      ...waterSummary.map(d=>d.date),
+      ...tempSummary.map(d=>d.date),
+      ...humSummary.map(d=>d.date),
+      ...presSummary.map(d=>d.date)
+    ])];
+
+    const tbody = document.getElementById('dailySummary').querySelector('tbody');
+    tbody.innerHTML = "";
+
+    let newRows = [];
+
+    dates.forEach(date=>{
+      const w = waterSummary.find(d=>d.date===date) || {min:'—',max:'—',avg:'—'};
+      const t = tempSummary.find(d=>d.date===date) || {min:'—',max:'—',avg:'—'};
+      const h = humSummary.find(d=>d.date===date) || {min:'—',max:'—',avg:'—'};
+      const p = presSummary.find(d=>d.date===date) || {min:'—',max:'—',avg:'—'};
+
+      const row = document.createElement('tr');
+      row.innerHTML=`
+        <td>${date}</td>
+        <td>${w.min} / ${w.max} / ${w.avg}</td>
+        <td>${t.min} / ${t.max} / ${t.avg}</td>
+        <td>${h.min} / ${h.max} / ${h.avg}</td>
+        <td>${p.min} / ${p.max} / ${p.avg}</td>
+      `;
+      tbody.appendChild(row);
+      newRows.push(row.innerHTML);
+    });
+
+    // Update last valid daily rows
+    if(newRows.length) lastDailyRows = newRows;
+
+  } catch(err){
+    console.error("Table update error:", err);
+    // Show last valid rows if fetch fails
+    if(lastDailyRows.length){
+      const tbody = document.getElementById('dailySummary').querySelector('tbody');
+      tbody.innerHTML = "";
+      lastDailyRows.forEach(inner => {
+        const row = document.createElement('tr');
+        row.innerHTML = inner;
+        tbody.appendChild(row);
+      });
+    }
+  }
+}
+
+// Initial update
+updateLiveValues();
+updateTable();
+
+// Set intervals
+setInterval(updateLiveValues, LIVE_INTERVAL);
+setInterval(updateTable, TABLE_INTERVAL);
+</script>
+
+
+
+</body>
+</html>
+     
